@@ -525,24 +525,41 @@ export default function TeamReportDashboard() {
   /* ---------------- Derived helpers ---------------- */
   const isAdmin = currentUser?.role === "Admin";
 
-  /* ---------------- Render login or app ---------------- */
-  if (!isLoggedIn) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-blue-50 p-6">
-        <Card className="w-full max-w-md shadow-xl p-6">
-          <CardHeader>
-            <h1 className="text-2xl font-bold text-blue-700 text-center mb-2">Login Telekolekting KC Tondano</h1>
-            <p className="text-center text-gray-500">Masukkan akun Anda untuk melanjutkan</p>
-          </CardHeader>
-          <CardContent>
-            <Input placeholder="Username" className="mb-3" value={username} onChange={(e) => setUsername(e.target.value)} />
-            <Input placeholder="Password" type="password" className="mb-3" value={password} onChange={(e) => setPassword(e.target.value)} />
-            <Button className="w-full bg-blue-600 text-white" onClick={handleLogin}>Login</Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  /*/* ---------------- Render login or app ---------------- */
+if (!isLoggedIn) {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-blue-50 p-6">
+      <Card className="w-full max-w-md shadow-xl p-6">
+        <CardHeader className="text-center">
+          {/* Logo BPJS */}
+          <img src="/logo.png" alt="Logo BPJS Kesehatan" className="w-24 mx-auto mb-3" />
+          <h1 className="text-2xl font-bold text-blue-700 mb-2">Login Telekolekting KC Tondano</h1>
+          <p className="text-gray-500">Masukkan akun Anda untuk melanjutkan</p>
+        </CardHeader>
+
+        <CardContent>
+          <Input
+            placeholder="Username"
+            className="mb-3"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+          />
+          <Input
+            placeholder="Password"
+            type="password"
+            className="mb-3"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <Button className="w-full bg-blue-600 text-white" onClick={handleLogin}>
+            Login
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 
   return (
     <div className="bg-gray-50 min-h-screen p-6">

@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { toast } from "sonner";
+import { toast, Toaster } from "sonner";
 import { MoreVertical } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -28,6 +28,9 @@ import { Progress } from "@/components/ui/progress";
 const DEFAULT_AVATAR = "/default-avatar.png";
 const STORAGE_KEY = "telekolekting_reports_final_v1";
 const MAPPING_STORAGE_KEY = "telekolekting_mapping_final_v1";
+const USERS_STORAGE_KEY = "telekolekting_users_v1";
+const IDB_NAME = "telekolekting_db_v1";
+const IDB_STORE = "mapping_images";
 
 /* Kabupaten/Kota list */
 const KABUPATEN = [
@@ -94,6 +97,95 @@ async function imgUrlToDataUrl(src: string, maxHeight = 200) {
   });
 }
 
+/* New helper: read & resize image -> dataURL (jpeg) */
+async function fileToResizedDataUrl(file: File, maxSide = 1200): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width;
+        let h = img.height;
+        if (Math.max(w, h) > maxSide) {
+          const ratio = w / h;
+          if (w > h) {
+            w = maxSide;
+            h = Math.round(maxSide / ratio);
+          } else {
+            h = maxSide;
+            w = Math.round(maxSide * ratio);
+          }
+        }
+        const c = document.createElement("canvas");
+        c.width = w;
+        c.height = h;
+        const ctx = c.getContext("2d")!;
+        ctx.drawImage(img, 0, 0, w, h);
+        // quality 0.7 to reduce size — you can tweak
+        const dataUrl = c.toDataURL("image/jpeg", 0.7);
+        resolve(dataUrl);
+      };
+      img.onerror = (e) => reject(e);
+      img.src = String(reader.result);
+    };
+    reader.onerror = (e) => reject(e);
+    reader.readAsDataURL(file);
+  });
+}
+
+/* -------------------- IndexedDB simple helper -------------------- */
+function openIdb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) {
+        db.createObjectStore(IDB_STORE);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbPut(key: string, value: Blob | string) {
+  const db = await openIdb();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, "readwrite");
+    const store = tx.objectStore(IDB_STORE);
+    const r = store.put(value, key);
+    r.onsuccess = () => resolve();
+    r.onerror = () => reject(r.error);
+  });
+}
+
+async function idbGet(key: string): Promise<Blob | string | undefined> {
+  const db = await openIdb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, "readonly");
+    const store = tx.objectStore(IDB_STORE);
+    const r = store.get(key);
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+}
+
+async function idbDelete(key: string) {
+  const db = await openIdb();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, "readwrite");
+    const store = tx.objectStore(IDB_STORE);
+    const r = store.delete(key);
+    r.onsuccess = () => resolve();
+    r.onerror = () => reject(r.error);
+  });
+}
+
+/* helper key builder for mapping images */
+function imageKey(year: string, month: string, regionIndex: number, photoIndex: number) {
+  return `mapping:${year}:${month}:r${regionIndex}:p${photoIndex}`;
+}
+
 /* ---------------------------- Component ---------------------------- */
 export default function TeamReportDashboard() {
   const now = new Date();
@@ -116,18 +208,44 @@ export default function TeamReportDashboard() {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
 
   /* Data state */
-  const [users, setUsers] = useState<any[]>([
+  const defaultUsers = [
     { username: "Tian16", password: "Walelang16", role: "Admin", name: "Admin", photo: null },
     { username: "tim1", password: "tim123", role: "Anggota", name: "Anggota 1", photo: null },
     { username: "tim2", password: "tim123", role: "Anggota", name: "Anggota 2", photo: null },
     { username: "tim3", password: "tim123", role: "Anggota", name: "Anggota 3", photo: null },
-  ]);
+  ];
 
-  const [reports, setReports] = useState<Record<string, any>>({});
+  const [users, setUsers] = useState<any[]>(() => {
+    try {
+      const raw = localStorage.getItem(USERS_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : defaultUsers;
+    } catch (e) {
+      console.error("load users", e);
+      return defaultUsers;
+    }
+  });
+
+  const [reports, setReports] = useState<Record<string, any>>(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      return {};
+    }
+  });
+
   const [pendingUploads, setPendingUploads] = useState<Record<string, string>>({});
 
   /* mapping storage structure: mappingStorage[year][month] = array of regions */
-  const [mappingStorage, setMappingStorage] = useState<any>({});
+  const [mappingStorage, setMappingStorage] = useState<any>(() => {
+    try {
+      const raw = localStorage.getItem(MAPPING_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      return {};
+    }
+  });
+
   const [mappingData, setMappingData] = useState(
     KABUPATEN.map((name) => ({ region: name, photos: Array(23).fill(null) }))
   );
@@ -135,31 +253,27 @@ export default function TeamReportDashboard() {
   /* admin modals */
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<{ name: string; username: string; password: string; photo: string | null }>({
-  name: "",
-  username: "",
-  password: "",
-  photo: null,
-});
+  const [editForm, setEditForm] = useState<{ name: string; username: string; password: string; photo: string | null }>(
+    {
+      name: "",
+      username: "",
+      password: "",
+      photo: null,
+    }
+  );
   const [newMember, setNewMember] = useState({ name: "", username: "", password: "" });
   const [confirmDelete, setConfirmDelete] = useState({ open: false, username: null as string | null });
   const [confirmSend, setConfirmSend] = useState({ open: false, username: null as string | null, filename: null as string | null });
 
-  /* --- load from localStorage --- */
+  /* --- persist users/reports/mapping to localStorage on change --- */
   useEffect(() => {
     try {
-      const rawReports = localStorage.getItem(STORAGE_KEY);
-      if (rawReports) setReports(JSON.parse(rawReports));
+      localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
     } catch (e) {
-      console.error("load reports", e);
+      console.error("save users", e);
+      toast.error("Gagal menyimpan data anggota ke localStorage");
     }
-    try {
-      const rawMap = localStorage.getItem(MAPPING_STORAGE_KEY);
-      if (rawMap) setMappingStorage(JSON.parse(rawMap));
-    } catch (e) {
-      console.error("load mapping", e);
-    }
-  }, []);
+  }, [users]);
 
   useEffect(() => {
     try {
@@ -173,13 +287,44 @@ export default function TeamReportDashboard() {
     } catch (e) {}
   }, [mappingStorage]);
 
-  /* when month/year/mappingStorage change -> set mappingData */
+  /* when month/year/mappingStorage change -> set mappingData (and load blobs from IDB) */
   useEffect(() => {
     const monthData = mappingStorage?.[year]?.[month];
     if (monthData && Array.isArray(monthData) && monthData.length === KABUPATEN.length) {
-      setMappingData(monthData);
-      const uploaded = monthData.reduce((a: number, r: any) => a + (r.photos?.filter(Boolean).length || 0), 0);
-      setProgress((uploaded / (KABUPATEN.length * 23)) * 100);
+      (async () => {
+        try {
+          const built = await Promise.all(monthData.map(async (r: any, regionIndex: number) => {
+            const photosSlots = Array(23).fill(null);
+            for (let i = 0; i < 23; i++) {
+              if (r.photos?.[i]) {
+                try {
+                  const key = imageKey(year, month, regionIndex, i);
+                  const blob = await idbGet(key);
+                  if (blob) {
+                    const url = typeof blob === "string" ? blob : URL.createObjectURL(blob as Blob);
+                    photosSlots[i] = url;
+                  } else {
+                    photosSlots[i] = null;
+                  }
+                } catch (e) {
+                  photosSlots[i] = null;
+                }
+              } else {
+                photosSlots[i] = null;
+              }
+            }
+            return { region: r.region || KABUPATEN[regionIndex], photos: photosSlots };
+          }));
+          setMappingData(built);
+          const uploaded = built.reduce((a: number, r: any) => a + (r.photos?.filter(Boolean).length || 0), 0);
+          setProgress((uploaded / (KABUPATEN.length * 23)) * 100);
+        } catch (e) {
+          console.error("load mapping from idb", e);
+          setMappingData(monthData);
+          const uploaded = monthData.reduce((a: number, r: any) => a + (r.photos?.filter(Boolean).length || 0), 0);
+          setProgress((uploaded / (KABUPATEN.length * 23)) * 100);
+        }
+      })();
     } else {
       setMappingData(KABUPATEN.map((name) => ({ region: name, photos: Array(23).fill(null) })));
       setProgress(0);
@@ -226,14 +371,20 @@ export default function TeamReportDashboard() {
     setOpenMenu(null);
   };
 
-  const handleEditPhotoChange = (e: any) => {
+  const handleEditPhotoChange = async (e: any) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    if (f.size > 3 * 1024 * 1024) {
-      toast.error("Ukuran foto maksimal 3 MB");
+    if (f.size > 5 * 1024 * 1024) { // profil boleh sedikit lebih besar
+      toast.error("Ukuran foto maksimal 5 MB");
       return;
     }
-    setEditForm((p) => ({ ...p, photo: URL.createObjectURL(f) }));
+    try {
+      const dataUrl = await fileToResizedDataUrl(f, 800);
+      setEditForm((p) => ({ ...p, photo: dataUrl }));
+    } catch (err) {
+      console.error(err);
+      toast.error("Gagal memuat foto profil");
+    }
   };
 
   const handleSaveEdit = () => {
@@ -268,30 +419,71 @@ export default function TeamReportDashboard() {
     });
   };
 
-  const handleUpload = (event: any, regionIndex: number) => {
+  /* ---------------- UPDATED handleUpload: store blobs in IDB + metadata in localStorage ---------------- */
+  const handleUpload = async (event: any, regionIndex: number) => {
     const files: File[] = Array.from(event.target.files || []);
-    if (files.some((f) => f.size > 3 * 1024 * 1024)) {
-      toast.error("Ukuran foto maksimal 3 MB per file.");
+    if (files.some((f) => f.size > 8 * 1024 * 1024)) {
+      toast.error("Ukuran foto maksimal 8 MB per file.");
       return;
     }
 
-    setMappingData((prev: any) => {
-      const updated = prev.map((r: any) => ({ ...r, photos: [...r.photos] }));
-      // find first empty slot left->right in that region and insert sequentially
-      let insertIndex = 0;
-      files.forEach((file) => {
-        while (insertIndex < 23 && updated[regionIndex].photos[insertIndex]) insertIndex++;
-        if (insertIndex < 23) {
-          updated[regionIndex].photos[insertIndex] = URL.createObjectURL(file);
-          insertIndex++;
-        }
+    try {
+      // Reserve slots and persist metadata first
+      setMappingData((prev: any) => {
+        const updated = prev.map((r: any) => ({ ...r, photos: [...r.photos] }));
+        let insertIndex = 0;
+        files.forEach(() => {
+          while (insertIndex < 23 && updated[regionIndex].photos[insertIndex]) insertIndex++;
+          if (insertIndex < 23) {
+            updated[regionIndex].photos[insertIndex] = null; // placeholder
+            insertIndex++;
+          }
+        });
+        saveMappingForCurrentPeriod(updated);
+        return updated;
       });
-      saveMappingForCurrentPeriod(updated);
-      const uploaded = updated.reduce((a: number, r: any) => a + r.photos.filter(Boolean).length, 0);
-      setProgress((uploaded / (KABUPATEN.length * 23)) * 100);
-      return updated;
-    });
-    toast.success("Upload foto berhasil!");
+
+      for (const file of files) {
+        const dataUrl = await fileToResizedDataUrl(file, 1200);
+        const res = await fetch(dataUrl);
+        const blob = await res.blob();
+
+        // find next available slot index for this region
+        let slot = -1;
+        setMappingData((prev: any) => {
+          const updated = prev.map((r: any) => ({ ...r, photos: [...r.photos] }));
+          let idx = 0;
+          while (idx < 23 && updated[regionIndex].photos[idx]) idx++;
+          if (idx < 23) {
+            slot = idx;
+            updated[regionIndex].photos[idx] = null; // placeholder
+          }
+          saveMappingForCurrentPeriod(updated);
+          return updated;
+        });
+
+        if (slot === -1) break; // region full
+
+        const key = imageKey(year, month, regionIndex, slot);
+        await idbPut(key, blob);
+
+        const objectUrl = URL.createObjectURL(blob);
+
+        setMappingData((prev: any) => {
+          const updated = prev.map((r: any) => ({ ...r, photos: [...r.photos] }));
+          updated[regionIndex].photos[slot] = objectUrl;
+          saveMappingForCurrentPeriod(updated);
+          const uploaded = updated.reduce((a: number, r: any) => a + r.photos.filter(Boolean).length, 0);
+          setProgress((uploaded / (KABUPATEN.length * 23)) * 100);
+          return updated;
+        });
+      }
+
+      toast.success("Upload foto berhasil!");
+    } catch (err) {
+      console.error("upload error", err);
+      toast.error("Gagal mengunggah foto");
+    }
   };
 
   const handleSaveMapping = () => {
@@ -299,7 +491,29 @@ export default function TeamReportDashboard() {
     toast.success("Data mapping tersimpan untuk periode ini");
   };
 
-  const handleDeleteAllMapping = () => {
+  const handleDeleteAllMapping = async () => {
+    // revoke object URLs currently in mappingData
+    mappingData.forEach((r: any, regionIndex: number) => {
+      r.photos.forEach((p: string | null, i: number) => {
+        try {
+          if (p && p.startsWith("blob:")) URL.revokeObjectURL(p);
+        } catch (e) {}
+      });
+    });
+
+    // delete IDB entries for current period
+    try {
+      for (let regionIndex = 0; regionIndex < KABUPATEN.length; regionIndex++) {
+        for (let i = 0; i < 23; i++) {
+          const key = imageKey(year, month, regionIndex, i);
+          // eslint-disable-next-line no-await-in-loop
+          await idbDelete(key);
+        }
+      }
+    } catch (e) {
+      console.error("delete idb entries", e);
+    }
+
     const empty = KABUPATEN.map((name) => ({ region: name, photos: Array(23).fill(null) }));
     setMappingData(empty);
     setMappingStorage((prev: any) => {
@@ -526,43 +740,44 @@ export default function TeamReportDashboard() {
   const isAdmin = currentUser?.role === "Admin";
 
   /*/* ---------------- Render login or app ---------------- */
-if (!isLoggedIn) {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-blue-50 p-6">
-      <Card className="w-full max-w-md shadow-xl p-6">
-        <CardHeader className="text-center">
-          {/* Logo BPJS */}
-          <img src="/logo.png" alt="Logo BPJS Kesehatan" className="w-24 mx-auto mb-3" />
-          <h1 className="text-2xl font-bold text-blue-700 mb-2">Login Telekolekting KC Tondano</h1>
-          <p className="text-gray-500">Masukkan akun Anda untuk melanjutkan</p>
-        </CardHeader>
+  if (!isLoggedIn) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-blue-50 p-6">
+        <Card className="w-full max-w-md shadow-xl p-6">
+          <CardHeader className="text-center">
+            {/* Logo BPJS */}
+            <img src="/logo.png" alt="Logo BPJS Kesehatan" className="w-24 mx-auto mb-3" />
+            <h1 className="text-2xl font-bold text-blue-700 mb-2">Login Telekolekting KC Tondano</h1>
+            <p className="text-gray-500">Masukkan akun Anda untuk melanjutkan</p>
+          </CardHeader>
 
-        <CardContent>
-          <Input
-            placeholder="Username"
-            className="mb-3"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-          />
-          <Input
-            placeholder="Password"
-            type="password"
-            className="mb-3"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-          <Button className="w-full bg-blue-600 text-white" onClick={handleLogin}>
-            Login
-          </Button>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
+          <CardContent>
+            <Input
+              placeholder="Username"
+              className="mb-3"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+            />
+            <Input
+              placeholder="Password"
+              type="password"
+              className="mb-3"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <Button className="w-full bg-blue-600 text-white" onClick={handleLogin}>
+              Login
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
 
   return (
     <div className="bg-gray-50 min-h-screen p-6">
+      <Toaster />
       <header className="flex justify-between items-center mb-6 border-b pb-4">
         <div>
           <h1 className="text-2xl font-bold text-blue-700">📸 TELEKOLEKTING KC TONDANO</h1>

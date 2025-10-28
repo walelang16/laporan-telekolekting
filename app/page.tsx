@@ -9,7 +9,7 @@ import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-/* UI components (simple Tailwind-based components located in src/components/ui/) */
+/* UI components (adjust imports if your project structure differs) */
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -32,7 +32,6 @@ const USERS_STORAGE_KEY = "telekolekting_users_v1";
 const IDB_NAME = "telekolekting_db_v1";
 const IDB_STORE = "mapping_images";
 
-/* Kabupaten/Kota list */
 const KABUPATEN = [
   "Minahasa",
   "Bolmong",
@@ -61,7 +60,7 @@ const MONTHS = [
 ];
 const YEARS = ["2024", "2025", "2026", "2027", "2028", "2029", "2030"];
 
-/* ---------------------------- Helper functions ---------------------------- */
+/* ---------------------------- Helpers ---------------------------- */
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -97,7 +96,7 @@ async function imgUrlToDataUrl(src: string, maxHeight = 200) {
   });
 }
 
-/* New helper: read & resize image -> dataURL (jpeg) */
+/* read & resize image -> dataURL (jpeg) */
 async function fileToResizedDataUrl(file: File, maxSide = 1200): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -121,7 +120,6 @@ async function fileToResizedDataUrl(file: File, maxSide = 1200): Promise<string>
         c.height = h;
         const ctx = c.getContext("2d")!;
         ctx.drawImage(img, 0, 0, w, h);
-        // quality 0.7 to reduce size — you can tweak
         const dataUrl = c.toDataURL("image/jpeg", 0.7);
         resolve(dataUrl);
       };
@@ -133,7 +131,7 @@ async function fileToResizedDataUrl(file: File, maxSide = 1200): Promise<string>
   });
 }
 
-/* -------------------- IndexedDB simple helper -------------------- */
+/* -------------------- IndexedDB helper -------------------- */
 function openIdb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(IDB_NAME, 1);
@@ -148,7 +146,7 @@ function openIdb(): Promise<IDBDatabase> {
   });
 }
 
-async function idbPut(key: string, value: Blob | string) {
+async function idbPut(key: string, value: Blob) {
   const db = await openIdb();
   return new Promise<void>((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, "readwrite");
@@ -159,7 +157,7 @@ async function idbPut(key: string, value: Blob | string) {
   });
 }
 
-async function idbGet(key: string): Promise<Blob | string | undefined> {
+async function idbGet(key: string): Promise<Blob | undefined> {
   const db = await openIdb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, "readonly");
@@ -181,7 +179,6 @@ async function idbDelete(key: string) {
   });
 }
 
-/* helper key builder for mapping images */
 function imageKey(year: string, month: string, regionIndex: number, photoIndex: number) {
   return `mapping:${year}:${month}:r${regionIndex}:p${photoIndex}`;
 }
@@ -199,9 +196,7 @@ export default function TeamReportDashboard() {
   const [password, setPassword] = useState("");
 
   /* UI state */
-  const [activeTab, setActiveTab] = useState<"anggota" | "laporan" | "mapping">(
-    "anggota"
-  );
+  const [activeTab, setActiveTab] = useState<"anggota" | "laporan" | "mapping">("anggota");
   const [month, setMonth] = useState(defaultMonth);
   const [year, setYear] = useState(defaultYear);
   const [progress, setProgress] = useState(0);
@@ -216,6 +211,7 @@ export default function TeamReportDashboard() {
   ];
 
   const [users, setUsers] = useState<any[]>(() => {
+    if (typeof window === "undefined") return defaultUsers;
     try {
       const raw = localStorage.getItem(USERS_STORAGE_KEY);
       return raw ? JSON.parse(raw) : defaultUsers;
@@ -226,6 +222,7 @@ export default function TeamReportDashboard() {
   });
 
   const [reports, setReports] = useState<Record<string, any>>(() => {
+    if (typeof window === "undefined") return {};
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       return raw ? JSON.parse(raw) : {};
@@ -238,6 +235,7 @@ export default function TeamReportDashboard() {
 
   /* mapping storage structure: mappingStorage[year][month] = array of regions */
   const [mappingStorage, setMappingStorage] = useState<any>(() => {
+    if (typeof window === "undefined") return {};
     try {
       const raw = localStorage.getItem(MAPPING_STORAGE_KEY);
       return raw ? JSON.parse(raw) : {};
@@ -246,6 +244,7 @@ export default function TeamReportDashboard() {
     }
   });
 
+  /* runtime mappingData (objectURLs or null) */
   const [mappingData, setMappingData] = useState(
     KABUPATEN.map((name) => ({ region: name, photos: Array(23).fill(null) }))
   );
@@ -253,19 +252,17 @@ export default function TeamReportDashboard() {
   /* admin modals */
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<{ name: string; username: string; password: string; photo: string | null }>(
-    {
-      name: "",
-      username: "",
-      password: "",
-      photo: null,
-    }
-  );
+  const [editForm, setEditForm] = useState<{ name: string; username: string; password: string; photo: string | null }>({
+    name: "",
+    username: "",
+    password: "",
+    photo: null,
+  });
   const [newMember, setNewMember] = useState({ name: "", username: "", password: "" });
   const [confirmDelete, setConfirmDelete] = useState({ open: false, username: null as string | null });
   const [confirmSend, setConfirmSend] = useState({ open: false, username: null as string | null, filename: null as string | null });
 
-  /* --- persist users/reports/mapping to localStorage on change --- */
+  /* persist users/reports/mapping to localStorage */
   useEffect(() => {
     try {
       localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
@@ -301,7 +298,7 @@ export default function TeamReportDashboard() {
                   const key = imageKey(year, month, regionIndex, i);
                   const blob = await idbGet(key);
                   if (blob) {
-                    const url = typeof blob === "string" ? blob : URL.createObjectURL(blob as Blob);
+                    const url = URL.createObjectURL(blob as Blob);
                     photosSlots[i] = url;
                   } else {
                     photosSlots[i] = null;
@@ -374,7 +371,7 @@ export default function TeamReportDashboard() {
   const handleEditPhotoChange = async (e: any) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    if (f.size > 5 * 1024 * 1024) { // profil boleh sedikit lebih besar
+    if (f.size > 5 * 1024 * 1024) {
       toast.error("Ukuran foto maksimal 5 MB");
       return;
     }
@@ -745,7 +742,6 @@ export default function TeamReportDashboard() {
       <div className="min-h-screen flex items-center justify-center bg-blue-50 p-6">
         <Card className="w-full max-w-md shadow-xl p-6">
           <CardHeader className="text-center">
-            {/* Logo BPJS */}
             <img src="/logo.png" alt="Logo BPJS Kesehatan" className="w-24 mx-auto mb-3" />
             <h1 className="text-2xl font-bold text-blue-700 mb-2">Login Telekolekting KC Tondano</h1>
             <p className="text-gray-500">Masukkan akun Anda untuk melanjutkan</p>
@@ -765,15 +761,16 @@ export default function TeamReportDashboard() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
-            <Button className="w-full bg-blue-600 text-white" onClick={handleLogin}>
-              Login
-            </Button>
+            <div className="flex gap-2">
+              <Button className="w-full bg-blue-600 text-white" onClick={handleLogin}>
+                Login
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>
     );
   }
-
 
   return (
     <div className="bg-gray-50 min-h-screen p-6">
